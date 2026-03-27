@@ -246,6 +246,8 @@ impl Scheduler {
         let task_name = task.name().to_string();
 
         let task_arc = Arc::new(task);
+        task_arc.update_next_execution().await;
+
         let mut tasks = self.tasks.lock().await;
         tasks.insert(task_id.clone(), task_arc);
 
@@ -266,6 +268,7 @@ impl Scheduler {
         let task_id = task.id().to_string();
         let task_name = task.name().to_string();
         let task_arc = Arc::new(task);
+        task_arc.update_next_execution().await;
 
         let mut tasks = self.tasks.lock().await;
         tasks.insert(task_id.clone(), task_arc);
