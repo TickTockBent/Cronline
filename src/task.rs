@@ -688,18 +688,22 @@ impl Task {
             }
         }
 
+        // Update next execution time
+        self.update_next_execution().await;
+
         // Update status based on result
+        // For recurring tasks (those with a schedule), reset to Idle so the
+        // scheduler will pick them up again at the next due time.
         {
             let mut status = self.status.lock().await;
-            *status = if result.is_ok() {
+            *status = if self.schedule.is_some() {
+                TaskStatus::Idle
+            } else if result.is_ok() {
                 TaskStatus::Completed
             } else {
                 TaskStatus::Failed
             };
         }
-
-        // Update next execution time
-        self.update_next_execution().await;
 
         // Return the result or error
         if result.is_err() {
