@@ -837,7 +837,6 @@ mod tests {
         .unwrap();
 
         scheduler.add_task(task).await.unwrap();
-        scheduler.update_next_executions().await.unwrap();
 
         scheduler.start().await.unwrap();
 

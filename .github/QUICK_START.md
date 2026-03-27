@@ -49,7 +49,7 @@ When you create a PR, these checks will run:
    - Validates licenses
 
 6. **MSRV Check** (~3 min)
-   - Verifies Rust 1.75.0 compatibility
+   - Verifies Rust 1.85.0 compatibility
 
 7. **Documentation** (~2 min)
    - Builds docs without warnings
@@ -165,7 +165,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ### "MSRV check failed"
 Either:
-- Fix code to work with Rust 1.75.0, OR
+- Fix code to work with Rust 1.85.0, OR
 - Update MSRV in README and workflow (if necessary)
 
 ### "Release failed: version mismatch"

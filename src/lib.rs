@@ -25,7 +25,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cronline = "0.2.1"
+//! cronline = "0.2.2"
 //! tokio = { version = "1", features = ["full"] }
 //! ```
 //!

@@ -69,9 +69,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
         .await?;
 
-    // Update the next execution time for all tasks
-    scheduler.update_next_executions().await?;
-
     // Print scheduled tasks
     let task_ids = scheduler.task_ids().await;
     info!("Scheduled tasks: {}", task_ids.len());

@@ -38,7 +38,7 @@ Add Cronline to your Cargo.toml:
 
 ```toml
 [dependencies]
-cronline = "0.2.1"
+cronline = "0.2.2"
 ```
 
 ## Basic Usage

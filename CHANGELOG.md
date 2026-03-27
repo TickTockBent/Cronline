@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-03-27
+
+### Fixed
+- Recurring cron and interval tasks now correctly re-execute instead of firing only once (#15)
+  - `add()` and `add_task()` now initialize `next_execution` automatically
+  - Recurring tasks reset to `Idle` after execution so the scheduler picks them up again
+
+### Changed
+- Bumped MSRV from 1.75.0 to 1.85.0 (required by `getrandom` 0.4.2 using edition 2024) (#17)
+- Added `rust-version = "1.85.0"` to Cargo.toml
+
 ## [0.2.1] - 2025-11-03
 
 ### Changed
@@ -19,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated GitHub Actions: `actions/upload-artifact` from v4 to v5
 - Updated GitHub Actions: `peaceiris/actions-gh-pages` from v3 to v4
 - Updated GitHub Actions: `softprops/action-gh-release` from v1 to v2
-- Fixed MSRV check to use `dtolnay/rust-toolchain@master` with explicit `toolchain: "1.75.0"`
+- Fixed MSRV check to use `dtolnay/rust-toolchain@master` with explicit toolchain version
 
 ## [0.2.0] - 2024-10-24
 
@@ -77,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added multi-version testing (stable, beta, nightly)
 - Integrated code coverage reporting with Codecov
 - Added security auditing with cargo-audit and cargo-deny
-- Added MSRV (Minimum Supported Rust Version) checks for Rust 1.75.0
+- Added MSRV (Minimum Supported Rust Version) checks (currently Rust 1.85.0)
 - Implemented fail-fast strategy with quick checks
 - Modern caching with `Swatinem/rust-cache@v2`
 - Weekly scheduled security scans
@@ -127,6 +138,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multiple scheduler support
 - Task status tracking (Idle, Running, Paused, Completed, Failed)
 
+[0.2.2]: https://github.com/TickTockBent/Cronline/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/TickTockBent/Cronline/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/TickTockBent/Cronline/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/TickTockBent/Cronline/releases/tag/v0.1.0
