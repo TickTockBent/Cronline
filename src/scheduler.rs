@@ -571,7 +571,7 @@ impl Scheduler {
             interval.tick().await;
 
             // Find and execute due tasks
-            Self::execute_due_tasks(&tasks, &config, &event_bus).await;
+            Self::execute_due_tasks(&tasks, &config, &running, &event_bus).await;
         }
 
         info!("Scheduler loop terminated");
@@ -581,6 +581,7 @@ impl Scheduler {
     async fn execute_due_tasks(
         tasks: &Arc<Mutex<HashMap<String, Arc<Task>>>>,
         config: &SchedulerConfig,
+        running: &Arc<Mutex<bool>>,
         _event_bus: &EventBus,
     ) {
         let now = Utc::now();
@@ -612,22 +613,21 @@ impl Scheduler {
             if should_execute {
                 debug!("Task '{}' is due for execution", task_id);
 
-                // Get a clone for the async block
+                // Get clones for the async block
                 let task_clone = Arc::clone(&task);
                 let config_clone = config.clone();
+                let running_clone = Arc::clone(running);
 
                 // Spawn a new task to execute
                 tokio::spawn(async move {
                     if let Err(e) = task_clone.execute().await {
                         error!("Task '{}' execution failed: {:?}", task_id, e);
 
-                        // If configured to stop on errors, stop the scheduler
                         if !config_clone.continue_on_error {
                             error!(
                                 "Stopping scheduler due to task failure (continue_on_error=false)"
                             );
-                            // Note: We can't directly stop the scheduler here,
-                            // but the main app can check task results and stop if needed
+                            *running_clone.lock().await = false;
                         }
                     }
                 });
@@ -1013,5 +1013,38 @@ mod tests {
             let stats = task.stats().await;
             assert!(stats.next_execution.is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn test_continue_on_error_false_stops_scheduler() {
+        let scheduler = Scheduler::with_config(SchedulerConfig {
+            check_interval: Duration::from_millis(50),
+            continue_on_error: false,
+            shutdown_grace_period: Duration::from_secs(5),
+        });
+
+        // Add an interval-based task that always fails and fires quickly
+        let task = Task::new(|| async { Err("intentional failure".to_string().into()) })
+            .with_name("Failing Task")
+            .with_interval(Duration::from_millis(10))
+            .with_config(crate::task::TaskConfig {
+                timeout: None,
+                max_retries: 0,
+                retry_delay: Duration::from_secs(0),
+                fail_scheduler_on_error: false,
+            });
+
+        scheduler.add_task(task).await.unwrap();
+        scheduler.start().await.unwrap();
+
+        // Wait long enough for the task to execute and signal shutdown
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // The scheduler's running flag should have been set to false
+        // by the failed task since continue_on_error=false
+        assert!(
+            !scheduler.is_running().await,
+            "Scheduler should have stopped after task failure with continue_on_error=false"
+        );
     }
 }

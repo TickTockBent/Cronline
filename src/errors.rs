@@ -2,8 +2,6 @@
 //!
 //! This module defines all error types that can occur during scheduler and task operations.
 
-use std::error::Error;
-use std::fmt;
 use std::io;
 
 /// Represents all possible errors that can occur in Cronline operations.
@@ -23,7 +21,7 @@ use std::io;
 ///     Ok(())
 /// }
 /// ```
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum CronlineError {
     /// Error parsing a cron expression.
     ///
@@ -37,6 +35,7 @@ pub enum CronlineError {
     /// let error = CronlineError::CronParseError("Invalid syntax".to_string());
     /// assert_eq!(error.to_string(), "Cron parsing error: Invalid syntax");
     /// ```
+    #[error("Cron parsing error: {0}")]
     CronParseError(String),
 
     /// Error during task execution.
@@ -50,13 +49,15 @@ pub enum CronlineError {
     ///
     /// let error = CronlineError::TaskExecutionError("Database connection failed".to_string());
     /// ```
+    #[error("Task execution error: {0}")]
     TaskExecutionError(String),
 
     /// IO error during operation.
     ///
     /// This wraps standard library IO errors that may occur during file operations
     /// or other IO-related tasks.
-    IoError(io::Error),
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
 
     /// Invalid configuration provided.
     ///
@@ -69,6 +70,7 @@ pub enum CronlineError {
     ///
     /// let error = CronlineError::ConfigError("Invalid timeout value".to_string());
     /// ```
+    #[error("Configuration error: {0}")]
     ConfigError(String),
 
     /// Task execution exceeded timeout.
@@ -82,6 +84,7 @@ pub enum CronlineError {
     ///
     /// let error = CronlineError::TaskTimeout("Task exceeded 30s timeout".to_string());
     /// ```
+    #[error("Task timeout: {0}")]
     TaskTimeout(String),
 
     /// Scheduler management error.
@@ -95,28 +98,8 @@ pub enum CronlineError {
     ///
     /// let error = CronlineError::SchedulerError("Already running".to_string());
     /// ```
+    #[error("Scheduler error: {0}")]
     SchedulerError(String),
-}
-
-impl fmt::Display for CronlineError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CronlineError::CronParseError(msg) => write!(f, "Cron parsing error: {}", msg),
-            CronlineError::TaskExecutionError(msg) => write!(f, "Task execution error: {}", msg),
-            CronlineError::IoError(err) => write!(f, "IO error: {}", err),
-            CronlineError::ConfigError(msg) => write!(f, "Configuration error: {}", msg),
-            CronlineError::TaskTimeout(msg) => write!(f, "Task timeout: {}", msg),
-            CronlineError::SchedulerError(msg) => write!(f, "Scheduler error: {}", msg),
-        }
-    }
-}
-
-impl Error for CronlineError {}
-
-impl From<io::Error> for CronlineError {
-    fn from(error: io::Error) -> Self {
-        CronlineError::IoError(error)
-    }
 }
 
 impl From<String> for CronlineError {
