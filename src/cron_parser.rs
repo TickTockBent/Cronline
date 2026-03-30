@@ -242,4 +242,39 @@ mod tests {
         let after_noon = Utc.with_ymd_and_hms(2023, 1, 1, 12, 1, 0).unwrap();
         assert!(!schedule.should_execute_at(after_noon));
     }
+
+    #[test]
+    fn test_expression_accessor() {
+        let schedule = CronSchedule::new("0 * * * *").unwrap();
+        assert_eq!(schedule.expression(), "0 * * * *");
+    }
+
+    #[test]
+    fn test_time_until_next() {
+        let schedule = CronSchedule::new("* * * * *").unwrap();
+        let duration = schedule.time_until_next();
+        assert!(duration.is_some());
+        // Next execution should be within 60 seconds
+        assert!(duration.unwrap().num_seconds() <= 60);
+    }
+
+    #[test]
+    fn test_should_execute_at_no_match() {
+        // Schedule that only runs at midnight Jan 1
+        let schedule = CronSchedule::new("0 0 1 1 *").unwrap();
+        // A time far from that
+        let time = Utc.with_ymd_and_hms(2023, 6, 15, 14, 30, 0).unwrap();
+        assert!(!schedule.should_execute_at(time));
+    }
+
+    #[test]
+    fn test_is_scheduled_now() {
+        // Every minute - should always be close enough to match
+        let result = is_scheduled_now("* * * * *");
+        assert!(result.is_ok());
+
+        // Invalid expression should error
+        let result = is_scheduled_now("invalid");
+        assert!(result.is_err());
+    }
 }

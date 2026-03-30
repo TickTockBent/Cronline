@@ -1152,6 +1152,216 @@ mod tests {
         assert!(!config.fail_scheduler_on_error);
     }
 
+    #[test]
+    fn test_task_status_display() {
+        assert_eq!(format!("{}", TaskStatus::Idle), "idle");
+        assert_eq!(format!("{}", TaskStatus::Running), "running");
+        assert_eq!(format!("{}", TaskStatus::Completed), "completed");
+        assert_eq!(format!("{}", TaskStatus::Failed), "failed");
+        assert_eq!(format!("{}", TaskStatus::Paused), "paused");
+    }
+
+    #[tokio::test]
+    async fn test_task_with_interval() {
+        let task = Task::new(|| async { Ok(()) }).with_interval(Duration::from_secs(300));
+
+        assert_eq!(task.name(), "Every 5 Minutes");
+        assert!(task.schedule.is_some());
+
+        // Named task should keep its name
+        let task = Task::new(|| async { Ok(()) })
+            .with_name("Custom Name")
+            .with_interval(Duration::from_secs(60));
+        assert_eq!(task.name(), "Custom Name");
+    }
+
+    #[tokio::test]
+    async fn test_task_tags() {
+        let task = Task::new(|| async { Ok(()) })
+            .with_tags(&["backup", "critical"])
+            .with_tag("database");
+
+        assert_eq!(task.tags(), &["backup", "critical", "database"]);
+        assert!(task.has_tag("backup"));
+        assert!(task.has_tag("critical"));
+        assert!(!task.has_tag("nonexistent"));
+    }
+
+    #[test]
+    fn test_generate_name_from_cron() {
+        // Direct match patterns
+        assert_eq!(Task::generate_name_from_cron("* * * * *"), "Every Minute");
+        assert_eq!(Task::generate_name_from_cron("0 * * * *"), "Hourly");
+        assert_eq!(
+            Task::generate_name_from_cron("0 0 * * *"),
+            "Daily at Midnight"
+        );
+        assert_eq!(Task::generate_name_from_cron("0 12 * * *"), "Daily at Noon");
+        assert_eq!(
+            Task::generate_name_from_cron("0 0 * * 0"),
+            "Weekly on Sunday"
+        );
+        assert_eq!(
+            Task::generate_name_from_cron("0 0 * * 1"),
+            "Weekly on Monday"
+        );
+        assert_eq!(
+            Task::generate_name_from_cron("0 0 1 * *"),
+            "Monthly on First Day"
+        );
+
+        // */N minute patterns
+        assert_eq!(
+            Task::generate_name_from_cron("*/5 * * * *"),
+            "Every 5 Minutes"
+        );
+        assert_eq!(
+            Task::generate_name_from_cron("*/15 * * * *"),
+            "Every 15 Minutes"
+        );
+
+        // */N unparseable fallback
+        assert_eq!(
+            Task::generate_name_from_cron("*/abc * * * *"),
+            "Interval Task (*/abc * * * *)"
+        );
+
+        // 0 */N hour patterns
+        assert_eq!(
+            Task::generate_name_from_cron("0 */2 * * *"),
+            "Every 2 Hours"
+        );
+        assert_eq!(
+            Task::generate_name_from_cron("0 */6 * * *"),
+            "Every 6 Hours"
+        );
+
+        // 0 */abc unparseable fallback
+        assert_eq!(
+            Task::generate_name_from_cron("0 */abc * * *"),
+            "Scheduled Task (0 */abc * * *)"
+        );
+
+        // Fallback for unrecognized patterns
+        assert_eq!(
+            Task::generate_name_from_cron("30 4 1,15 * *"),
+            "Scheduled Task (30 4 1,15 * *)"
+        );
+    }
+
+    #[test]
+    fn test_generate_name_from_interval() {
+        assert_eq!(
+            Task::generate_name_from_interval(Duration::from_secs(30)),
+            "Every 30 Seconds"
+        );
+        assert_eq!(
+            Task::generate_name_from_interval(Duration::from_secs(300)),
+            "Every 5 Minutes"
+        );
+        assert_eq!(
+            Task::generate_name_from_interval(Duration::from_secs(7200)),
+            "Every 2 Hours"
+        );
+        assert_eq!(
+            Task::generate_name_from_interval(Duration::from_secs(172800)),
+            "Every 2 Days"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_interval_update_next_execution() {
+        let task = Task::new(|| async { Ok(()) }).with_interval(Duration::from_secs(60));
+
+        // First call with no prior execution should set next_execution to ~now
+        task.update_next_execution().await;
+        let stats = task.stats().await;
+        assert!(stats.next_execution.is_some());
+
+        // After executing, next_execution should be ~60s after last_execution
+        task.execute().await.unwrap();
+        let stats = task.stats().await;
+        assert!(stats.next_execution.is_some());
+        assert!(stats.last_execution.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_task_execution_no_timeout() {
+        // Task with no timeout configured should still execute correctly
+        let task = Task::new(|| async { Ok(()) }).with_config(TaskConfig {
+            timeout: None,
+            max_retries: 0,
+            retry_delay: Duration::from_secs(1),
+            fail_scheduler_on_error: false,
+        });
+
+        let result = task.execute().await;
+        assert!(result.is_ok());
+        assert_eq!(task.stats().await.successes, 1);
+    }
+
+    #[tokio::test]
+    async fn test_task_cancel_during_execution() {
+        let task = Arc::new(
+            Task::new(|| async {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                Ok(())
+            })
+            .with_config(TaskConfig {
+                timeout: Some(Duration::from_secs(30)),
+                max_retries: 0,
+                retry_delay: Duration::from_secs(1),
+                fail_scheduler_on_error: false,
+            }),
+        );
+
+        let task_exec = Arc::clone(&task);
+        let handle = tokio::spawn(async move { task_exec.execute().await });
+
+        // Let it start
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Cancel it
+        task.cancel().await;
+
+        let result = handle.await.unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_task_cancel_no_timeout() {
+        let task = Arc::new(
+            Task::new(|| async {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                Ok(())
+            })
+            .with_config(TaskConfig {
+                timeout: None,
+                max_retries: 0,
+                retry_delay: Duration::from_secs(1),
+                fail_scheduler_on_error: false,
+            }),
+        );
+
+        let task_exec = Arc::clone(&task);
+        let handle = tokio::spawn(async move { task_exec.execute().await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        task.cancel().await;
+
+        let result = handle.await.unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resume_non_paused_task() {
+        let task = Task::new(|| async { Ok(()) });
+        assert_eq!(task.status().await, TaskStatus::Idle);
+
+        let result = task.resume().await;
+        assert!(result.is_err());
+    }
+
     #[tokio::test]
     async fn test_task_stats_tracking() {
         let task = Task::new(|| async {
