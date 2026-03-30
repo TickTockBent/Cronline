@@ -636,6 +636,15 @@ impl Scheduler {
     }
 
     /// Update the next execution time for all tasks
+    ///
+    /// # Deprecated
+    /// Since 0.2.2, `add()` and `add_task()` automatically call
+    /// `update_next_execution()` on each task when it is added to the scheduler.
+    /// This method is no longer needed for normal usage.
+    #[deprecated(
+        since = "0.2.2",
+        note = "Tasks now update their next execution time automatically when added to the scheduler. This method is no longer needed for normal usage."
+    )]
     pub async fn update_next_executions(&self) -> Result<()> {
         let tasks = self.tasks.lock().await;
         for task in tasks.values() {
@@ -917,6 +926,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_update_next_executions() {
         let scheduler = Scheduler::new();
 
