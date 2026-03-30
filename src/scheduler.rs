@@ -945,10 +945,8 @@ mod tests {
         let task1 = Task::new(|| async { Ok(()) })
             .with_tag("backup")
             .with_tag("critical");
-        let task2 = Task::new(|| async { Ok(()) })
-            .with_tag("monitoring");
-        let task3 = Task::new(|| async { Ok(()) })
-            .with_tag("backup");
+        let task2 = Task::new(|| async { Ok(()) }).with_tag("monitoring");
+        let task3 = Task::new(|| async { Ok(()) }).with_tag("backup");
 
         scheduler.add("* * * * *", task1).await.unwrap();
         scheduler.add("* * * * *", task2).await.unwrap();
@@ -976,7 +974,9 @@ mod tests {
         scheduler.add("* * * * *", task2).await.unwrap();
         scheduler.add("* * * * *", task3).await.unwrap();
 
-        let tasks = scheduler.tasks_with_any_tag(&["backup", "monitoring"]).await;
+        let tasks = scheduler
+            .tasks_with_any_tag(&["backup", "monitoring"])
+            .await;
         assert_eq!(tasks.len(), 2);
     }
 
@@ -987,8 +987,7 @@ mod tests {
         let task1 = Task::new(|| async { Ok(()) })
             .with_tag("backup")
             .with_tag("critical");
-        let task2 = Task::new(|| async { Ok(()) })
-            .with_tag("backup");
+        let task2 = Task::new(|| async { Ok(()) }).with_tag("backup");
 
         scheduler.add("* * * * *", task1).await.unwrap();
         scheduler.add("* * * * *", task2).await.unwrap();

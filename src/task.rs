@@ -1163,8 +1163,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_with_interval() {
-        let task = Task::new(|| async { Ok(()) })
-            .with_interval(Duration::from_secs(300));
+        let task = Task::new(|| async { Ok(()) }).with_interval(Duration::from_secs(300));
 
         assert_eq!(task.name(), "Every 5 Minutes");
         assert!(task.schedule.is_some());
@@ -1193,15 +1192,33 @@ mod tests {
         // Direct match patterns
         assert_eq!(Task::generate_name_from_cron("* * * * *"), "Every Minute");
         assert_eq!(Task::generate_name_from_cron("0 * * * *"), "Hourly");
-        assert_eq!(Task::generate_name_from_cron("0 0 * * *"), "Daily at Midnight");
+        assert_eq!(
+            Task::generate_name_from_cron("0 0 * * *"),
+            "Daily at Midnight"
+        );
         assert_eq!(Task::generate_name_from_cron("0 12 * * *"), "Daily at Noon");
-        assert_eq!(Task::generate_name_from_cron("0 0 * * 0"), "Weekly on Sunday");
-        assert_eq!(Task::generate_name_from_cron("0 0 * * 1"), "Weekly on Monday");
-        assert_eq!(Task::generate_name_from_cron("0 0 1 * *"), "Monthly on First Day");
+        assert_eq!(
+            Task::generate_name_from_cron("0 0 * * 0"),
+            "Weekly on Sunday"
+        );
+        assert_eq!(
+            Task::generate_name_from_cron("0 0 * * 1"),
+            "Weekly on Monday"
+        );
+        assert_eq!(
+            Task::generate_name_from_cron("0 0 1 * *"),
+            "Monthly on First Day"
+        );
 
         // */N minute patterns
-        assert_eq!(Task::generate_name_from_cron("*/5 * * * *"), "Every 5 Minutes");
-        assert_eq!(Task::generate_name_from_cron("*/15 * * * *"), "Every 15 Minutes");
+        assert_eq!(
+            Task::generate_name_from_cron("*/5 * * * *"),
+            "Every 5 Minutes"
+        );
+        assert_eq!(
+            Task::generate_name_from_cron("*/15 * * * *"),
+            "Every 15 Minutes"
+        );
 
         // */N unparseable fallback
         assert_eq!(
@@ -1210,8 +1227,14 @@ mod tests {
         );
 
         // 0 */N hour patterns
-        assert_eq!(Task::generate_name_from_cron("0 */2 * * *"), "Every 2 Hours");
-        assert_eq!(Task::generate_name_from_cron("0 */6 * * *"), "Every 6 Hours");
+        assert_eq!(
+            Task::generate_name_from_cron("0 */2 * * *"),
+            "Every 2 Hours"
+        );
+        assert_eq!(
+            Task::generate_name_from_cron("0 */6 * * *"),
+            "Every 6 Hours"
+        );
 
         // 0 */abc unparseable fallback
         assert_eq!(
@@ -1248,8 +1271,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_interval_update_next_execution() {
-        let task = Task::new(|| async { Ok(()) })
-            .with_interval(Duration::from_secs(60));
+        let task = Task::new(|| async { Ok(()) }).with_interval(Duration::from_secs(60));
 
         // First call with no prior execution should set next_execution to ~now
         task.update_next_execution().await;
@@ -1266,13 +1288,12 @@ mod tests {
     #[tokio::test]
     async fn test_task_execution_no_timeout() {
         // Task with no timeout configured should still execute correctly
-        let task = Task::new(|| async { Ok(()) })
-            .with_config(TaskConfig {
-                timeout: None,
-                max_retries: 0,
-                retry_delay: Duration::from_secs(1),
-                fail_scheduler_on_error: false,
-            });
+        let task = Task::new(|| async { Ok(()) }).with_config(TaskConfig {
+            timeout: None,
+            max_retries: 0,
+            retry_delay: Duration::from_secs(1),
+            fail_scheduler_on_error: false,
+        });
 
         let result = task.execute().await;
         assert!(result.is_ok());
