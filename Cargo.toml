@@ -2,7 +2,7 @@
 name = "cronline"
 version = "0.2.2"
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.87.0"
 authors = ["TickTockBent <benttick@gmail.com>"]
 description = "Lightweight Task Scheduling for Rust"
 license = "MIT"
