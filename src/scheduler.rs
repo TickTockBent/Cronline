@@ -241,7 +241,8 @@ impl Scheduler {
     ///
     /// Returns [`CronlineError::CronParseError`] if the cron expression is invalid.
     pub async fn add(&self, cron_expr: &str, task: Task) -> Result<String> {
-        let task = task.with_schedule(cron_expr)?;
+        let mut task = task.with_schedule(cron_expr)?;
+        task.set_event_bus(self.event_bus.clone());
         let task_id = task.id().to_string();
         let task_name = task.name().to_string();
 
@@ -264,7 +265,8 @@ impl Scheduler {
     }
 
     /// Add a pre-configured task to the scheduler
-    pub async fn add_task(&self, task: Task) -> Result<String> {
+    pub async fn add_task(&self, mut task: Task) -> Result<String> {
+        task.set_event_bus(self.event_bus.clone());
         let task_id = task.id().to_string();
         let task_name = task.name().to_string();
         let task_arc = Arc::new(task);
@@ -443,11 +445,10 @@ impl Scheduler {
         let tasks = Arc::clone(&self.tasks);
         let config = self.config.clone();
         let running_arc = Arc::clone(&self.running);
-        let event_bus = self.event_bus.clone();
 
         // Spawn the background scheduler task
         let handle = tokio::spawn(async move {
-            Self::scheduler_loop(tasks, config, running_arc, event_bus).await;
+            Self::scheduler_loop(tasks, config, running_arc).await;
         });
 
         // Store the handle
@@ -560,7 +561,6 @@ impl Scheduler {
         tasks: Arc<Mutex<HashMap<String, Arc<Task>>>>,
         config: SchedulerConfig,
         running: Arc<Mutex<bool>>,
-        event_bus: EventBus,
     ) {
         // Interval for periodic checking
         let mut interval = time::interval_at(Instant::now(), config.check_interval);
@@ -571,7 +571,7 @@ impl Scheduler {
             interval.tick().await;
 
             // Find and execute due tasks
-            Self::execute_due_tasks(&tasks, &config, &running, &event_bus).await;
+            Self::execute_due_tasks(&tasks, &config, &running).await;
         }
 
         info!("Scheduler loop terminated");
@@ -582,7 +582,6 @@ impl Scheduler {
         tasks: &Arc<Mutex<HashMap<String, Arc<Task>>>>,
         config: &SchedulerConfig,
         running: &Arc<Mutex<bool>>,
-        _event_bus: &EventBus,
     ) {
         let now = Utc::now();
         let task_ids: Vec<(String, Arc<Task>)> = {
@@ -1046,5 +1045,258 @@ mod tests {
             !scheduler.is_running().await,
             "Scheduler should have stopped after task failure with continue_on_error=false"
         );
+    }
+
+    #[tokio::test]
+    async fn test_events_task_starting_and_completed() {
+        let scheduler = Scheduler::new();
+        let mut receiver = scheduler.event_bus().subscribe();
+
+        let task = Task::new(|| async { Ok(()) })
+            .with_name("Event Test Task")
+            .with_config(crate::task::TaskConfig {
+                timeout: None,
+                max_retries: 0,
+                retry_delay: Duration::from_secs(0),
+                fail_scheduler_on_error: false,
+            });
+
+        let task_id = scheduler.add("* * * * *", task).await.unwrap();
+
+        // Drain the TaskAdded event
+        let event = receiver.recv().await.unwrap();
+        assert!(matches!(event, SchedulerEvent::TaskAdded { .. }));
+
+        // Execute the task directly
+        let task_arc = scheduler.get_task(&task_id).await.unwrap();
+        task_arc.execute().await.unwrap();
+
+        // Should receive: StatusChanged(Idle→Running), TaskStarting,
+        //                 StatusChanged(Running→Idle), TaskCompleted
+        let event = receiver.recv().await.unwrap();
+        assert!(matches!(
+            event,
+            SchedulerEvent::TaskStatusChanged {
+                old_status: TaskStatus::Idle,
+                new_status: TaskStatus::Running,
+                ..
+            }
+        ));
+
+        let event = receiver.recv().await.unwrap();
+        assert!(matches!(event, SchedulerEvent::TaskStarting { .. }));
+
+        let event = receiver.recv().await.unwrap();
+        assert!(matches!(
+            event,
+            SchedulerEvent::TaskStatusChanged {
+                old_status: TaskStatus::Running,
+                new_status: TaskStatus::Idle,
+                ..
+            }
+        ));
+
+        let event = receiver.recv().await.unwrap();
+        assert!(matches!(event, SchedulerEvent::TaskCompleted { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_events_task_failed() {
+        let scheduler = Scheduler::new();
+        let mut receiver = scheduler.event_bus().subscribe();
+
+        let task = Task::new(|| async { Err("boom".to_string().into()) })
+            .with_name("Failing Event Task")
+            .with_config(crate::task::TaskConfig {
+                timeout: None,
+                max_retries: 0,
+                retry_delay: Duration::from_secs(0),
+                fail_scheduler_on_error: false,
+            });
+
+        let task_id = scheduler.add("* * * * *", task).await.unwrap();
+        let _ = receiver.recv().await.unwrap(); // TaskAdded
+
+        let task_arc = scheduler.get_task(&task_id).await.unwrap();
+        let _ = task_arc.execute().await; // Will fail
+
+        let _ = receiver.recv().await.unwrap(); // StatusChanged Idle→Running
+        let _ = receiver.recv().await.unwrap(); // TaskStarting
+        let _ = receiver.recv().await.unwrap(); // StatusChanged Running→Idle
+
+        let event = receiver.recv().await.unwrap();
+        match event {
+            SchedulerEvent::TaskFailed {
+                retry_count, error, ..
+            } => {
+                assert_eq!(retry_count, 0);
+                assert!(error.contains("boom"));
+            }
+            other => panic!("Expected TaskFailed, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_events_task_paused_and_resumed() {
+        let scheduler = Scheduler::new();
+        let mut receiver = scheduler.event_bus().subscribe();
+
+        let task = Task::new(|| async { Ok(()) }).with_name("Pause Test");
+        let task_id = scheduler.add("* * * * *", task).await.unwrap();
+        let _ = receiver.recv().await.unwrap(); // TaskAdded
+
+        let task_arc = scheduler.get_task(&task_id).await.unwrap();
+
+        // Pause
+        task_arc.pause().await.unwrap();
+
+        let event = receiver.recv().await.unwrap();
+        assert!(matches!(
+            event,
+            SchedulerEvent::TaskStatusChanged {
+                old_status: TaskStatus::Idle,
+                new_status: TaskStatus::Paused,
+                ..
+            }
+        ));
+
+        let event = receiver.recv().await.unwrap();
+        assert!(matches!(event, SchedulerEvent::TaskPaused { .. }));
+
+        // Resume
+        task_arc.resume().await.unwrap();
+
+        let event = receiver.recv().await.unwrap();
+        assert!(matches!(
+            event,
+            SchedulerEvent::TaskStatusChanged {
+                old_status: TaskStatus::Paused,
+                new_status: TaskStatus::Idle,
+                ..
+            }
+        ));
+
+        let event = receiver.recv().await.unwrap();
+        assert!(matches!(event, SchedulerEvent::TaskResumed { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_events_task_timed_out() {
+        let scheduler = Scheduler::new();
+        let mut receiver = scheduler.event_bus().subscribe();
+
+        let task = Task::new(|| async {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            Ok(())
+        })
+        .with_name("Timeout Test")
+        .with_config(crate::task::TaskConfig {
+            timeout: Some(Duration::from_millis(50)),
+            max_retries: 0,
+            retry_delay: Duration::from_secs(0),
+            fail_scheduler_on_error: false,
+        });
+
+        let task_id = scheduler.add("* * * * *", task).await.unwrap();
+        let _ = receiver.recv().await.unwrap(); // TaskAdded
+
+        let task_arc = scheduler.get_task(&task_id).await.unwrap();
+        let _ = task_arc.execute().await; // Will timeout
+
+        let _ = receiver.recv().await.unwrap(); // StatusChanged Idle→Running
+        let _ = receiver.recv().await.unwrap(); // TaskStarting
+
+        // Collect remaining events — TimedOut should appear
+        let mut found_timed_out = false;
+        for _ in 0..5 {
+            if let Ok(event) = receiver.try_recv() {
+                if matches!(event, SchedulerEvent::TaskTimedOut { .. }) {
+                    found_timed_out = true;
+                    break;
+                }
+            }
+        }
+        assert!(found_timed_out, "Expected TaskTimedOut event");
+    }
+
+    #[tokio::test]
+    async fn test_events_task_cancelled() {
+        let scheduler = Scheduler::new();
+        let mut receiver = scheduler.event_bus().subscribe();
+
+        let task = Task::new(|| async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok(())
+        })
+        .with_name("Cancel Test")
+        .with_config(crate::task::TaskConfig {
+            timeout: Some(Duration::from_secs(30)),
+            max_retries: 0,
+            retry_delay: Duration::from_secs(0),
+            fail_scheduler_on_error: false,
+        });
+
+        let task_id = scheduler.add("* * * * *", task).await.unwrap();
+        let _ = receiver.recv().await.unwrap(); // TaskAdded
+
+        let task_arc = scheduler.get_task(&task_id).await.unwrap();
+        let task_for_cancel = Arc::clone(&task_arc);
+
+        // Start execution in background and cancel after a short delay
+        let exec_handle = tokio::spawn(async move { task_arc.execute().await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        task_for_cancel.cancel().await;
+
+        let _ = exec_handle.await;
+
+        // Collect events — TaskCancelled should appear
+        let mut found_cancelled = false;
+        for _ in 0..10 {
+            if let Ok(event) = receiver.try_recv() {
+                if matches!(event, SchedulerEvent::TaskCancelled { .. }) {
+                    found_cancelled = true;
+                    break;
+                }
+            }
+        }
+        assert!(found_cancelled, "Expected TaskCancelled event");
+    }
+
+    #[tokio::test]
+    async fn test_events_timeout_warning() {
+        let scheduler = Scheduler::new();
+        let mut receiver = scheduler.event_bus().subscribe();
+
+        // Task that takes longer than 80% of timeout but less than full timeout
+        let task = Task::new(|| async {
+            tokio::time::sleep(Duration::from_millis(180)).await;
+            Ok(())
+        })
+        .with_name("Warning Test")
+        .with_config(crate::task::TaskConfig {
+            timeout: Some(Duration::from_millis(200)),
+            max_retries: 0,
+            retry_delay: Duration::from_secs(0),
+            fail_scheduler_on_error: false,
+        });
+
+        let task_id = scheduler.add("* * * * *", task).await.unwrap();
+        let _ = receiver.recv().await.unwrap(); // TaskAdded
+
+        let task_arc = scheduler.get_task(&task_id).await.unwrap();
+        let _ = task_arc.execute().await;
+
+        // Collect all events — should see TaskTimeoutWarning
+        let mut found_warning = false;
+        for _ in 0..10 {
+            if let Ok(event) = receiver.try_recv() {
+                if matches!(event, SchedulerEvent::TaskTimeoutWarning { .. }) {
+                    found_warning = true;
+                    break;
+                }
+            }
+        }
+        assert!(found_warning, "Expected TaskTimeoutWarning event");
     }
 }

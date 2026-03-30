@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use crate::cron_parser::CronSchedule;
 use crate::errors::CronlineError;
+use crate::events::{EventBus, SchedulerEvent};
 use crate::Result;
 
 /// Represents different scheduling types for tasks.
@@ -245,6 +246,8 @@ pub struct Task {
     stats: Arc<Mutex<TaskStats>>,
     /// Handle for cancellation support
     cancellation_token: Arc<Mutex<Option<tokio_util::sync::CancellationToken>>>,
+    /// Optional event bus for publishing task lifecycle events
+    event_bus: Option<EventBus>,
 }
 
 impl Task {
@@ -294,6 +297,7 @@ impl Task {
             status: Arc::new(Mutex::new(TaskStatus::Idle)),
             stats: Arc::new(Mutex::new(TaskStats::default())),
             cancellation_token: Arc::new(Mutex::new(None)),
+            event_bus: None,
         }
     }
 
@@ -489,6 +493,22 @@ impl Task {
         self.tags.iter().any(|t| t == tag)
     }
 
+    /// Sets the event bus for this task.
+    ///
+    /// When an event bus is set, the task will publish lifecycle events
+    /// (starting, completed, failed, paused, resumed, etc.) to it.
+    /// This is called by the scheduler when a task is added.
+    pub(crate) fn set_event_bus(&mut self, event_bus: EventBus) {
+        self.event_bus = Some(event_bus);
+    }
+
+    /// Publishes an event to the event bus, if one is configured.
+    fn publish_event(&self, event: SchedulerEvent) {
+        if let Some(bus) = &self.event_bus {
+            bus.publish(event);
+        }
+    }
+
     /// Generates a meaningful name from a cron expression.
     fn generate_name_from_cron(cron_expr: &str) -> String {
         // Parse common cron patterns and generate descriptive names
@@ -639,8 +659,23 @@ impl Task {
         // Update status to running
         {
             let mut status = self.status.lock().await;
+            let old_status = *status;
             *status = TaskStatus::Running;
+
+            self.publish_event(SchedulerEvent::TaskStatusChanged {
+                task_id: self.id.clone(),
+                task_name: self.name.clone(),
+                old_status,
+                new_status: TaskStatus::Running,
+                timestamp: Utc::now(),
+            });
         }
+
+        self.publish_event(SchedulerEvent::TaskStarting {
+            task_id: self.id.clone(),
+            task_name: self.name.clone(),
+            timestamp: Utc::now(),
+        });
 
         let start_time = Utc::now();
         let mut result = self.execute_once().await;
@@ -694,25 +729,50 @@ impl Task {
         // Update status based on result
         // For recurring tasks (those with a schedule), reset to Idle so the
         // scheduler will pick them up again at the next due time.
+        let new_status = if self.schedule.is_some() {
+            TaskStatus::Idle
+        } else if result.is_ok() {
+            TaskStatus::Completed
+        } else {
+            TaskStatus::Failed
+        };
+
         {
             let mut status = self.status.lock().await;
-            *status = if self.schedule.is_some() {
-                TaskStatus::Idle
-            } else if result.is_ok() {
-                TaskStatus::Completed
-            } else {
-                TaskStatus::Failed
-            };
+            *status = new_status;
+
+            self.publish_event(SchedulerEvent::TaskStatusChanged {
+                task_id: self.id.clone(),
+                task_name: self.name.clone(),
+                old_status: TaskStatus::Running,
+                new_status,
+                timestamp: Utc::now(),
+            });
         }
 
-        // Return the result or error
+        // Publish completion or failure event
         if result.is_err() {
             error!(
                 "Task {} failed after {} retries: {:?}",
                 self.name, retries, result
             );
+
+            self.publish_event(SchedulerEvent::TaskFailed {
+                task_id: self.id.clone(),
+                task_name: self.name.clone(),
+                timestamp: Utc::now(),
+                error: format!("{:?}", result),
+                retry_count: retries,
+            });
         } else {
             debug!("Task {} completed successfully", self.name);
+
+            self.publish_event(SchedulerEvent::TaskCompleted {
+                task_id: self.id.clone(),
+                task_name: self.name.clone(),
+                timestamp: Utc::now(),
+                duration_ms: duration.as_millis() as u64,
+            });
         }
 
         result
@@ -736,7 +796,9 @@ impl Task {
                 let warning_duration =
                     Duration::from_nanos((timeout_duration.as_nanos() as f64 * 0.8) as u64);
                 let task_name = self.name.clone();
+                let task_id = self.id.clone();
                 let cancel_for_warning = cancel_token.clone();
+                let warning_event_bus = self.event_bus.clone();
 
                 // Spawn warning task
                 let warning_handle = tokio::spawn(async move {
@@ -744,6 +806,14 @@ impl Task {
                         _ = tokio::time::sleep(warning_duration) => {
                             warn!("Task '{}' is approaching timeout ({}% complete)",
                                 task_name, 80);
+                            if let Some(bus) = &warning_event_bus {
+                                bus.publish(SchedulerEvent::TaskTimeoutWarning {
+                                    task_id,
+                                    task_name,
+                                    timestamp: Utc::now(),
+                                    percent_complete: 80,
+                                });
+                            }
                         }
                         _ = cancel_for_warning.cancelled() => {
                             // Task completed before warning threshold
@@ -779,14 +849,29 @@ impl Task {
 
                 match execution_result {
                     ExecutionOutcome::Completed(result) => result,
-                    ExecutionOutcome::Cancelled => Err(CronlineError::TaskExecutionError(format!(
-                        "Task '{}' was cancelled",
-                        self.name
-                    ))),
-                    ExecutionOutcome::TimedOut => Err(CronlineError::TaskTimeout(format!(
-                        "Task '{}' timed out after {:?}",
-                        self.name, timeout_duration
-                    ))),
+                    ExecutionOutcome::Cancelled => {
+                        self.publish_event(SchedulerEvent::TaskCancelled {
+                            task_id: self.id.clone(),
+                            task_name: self.name.clone(),
+                            timestamp: Utc::now(),
+                        });
+                        Err(CronlineError::TaskExecutionError(format!(
+                            "Task '{}' was cancelled",
+                            self.name
+                        )))
+                    }
+                    ExecutionOutcome::TimedOut => {
+                        self.publish_event(SchedulerEvent::TaskTimedOut {
+                            task_id: self.id.clone(),
+                            task_name: self.name.clone(),
+                            timestamp: Utc::now(),
+                            timeout_duration_ms: timeout_duration.as_millis() as u64,
+                        });
+                        Err(CronlineError::TaskTimeout(format!(
+                            "Task '{}' timed out after {:?}",
+                            self.name, timeout_duration
+                        )))
+                    }
                 }
             }
             None => {
@@ -801,10 +886,17 @@ impl Task {
 
                 match result {
                     Some(r) => r,
-                    None => Err(CronlineError::TaskExecutionError(format!(
-                        "Task '{}' was cancelled",
-                        self.name
-                    ))),
+                    None => {
+                        self.publish_event(SchedulerEvent::TaskCancelled {
+                            task_id: self.id.clone(),
+                            task_name: self.name.clone(),
+                            timestamp: Utc::now(),
+                        });
+                        Err(CronlineError::TaskExecutionError(format!(
+                            "Task '{}' was cancelled",
+                            self.name
+                        )))
+                    }
                 }
             }
         };
@@ -868,7 +960,23 @@ impl Task {
     pub async fn pause(&self) -> Result<()> {
         let mut status = self.status.lock().await;
         if *status != TaskStatus::Running {
+            let old_status = *status;
             *status = TaskStatus::Paused;
+
+            self.publish_event(SchedulerEvent::TaskStatusChanged {
+                task_id: self.id.clone(),
+                task_name: self.name.clone(),
+                old_status,
+                new_status: TaskStatus::Paused,
+                timestamp: Utc::now(),
+            });
+
+            self.publish_event(SchedulerEvent::TaskPaused {
+                task_id: self.id.clone(),
+                task_name: self.name.clone(),
+                timestamp: Utc::now(),
+            });
+
             Ok(())
         } else {
             Err(CronlineError::TaskExecutionError(format!(
@@ -906,6 +1014,21 @@ impl Task {
         let mut status = self.status.lock().await;
         if *status == TaskStatus::Paused {
             *status = TaskStatus::Idle;
+
+            self.publish_event(SchedulerEvent::TaskStatusChanged {
+                task_id: self.id.clone(),
+                task_name: self.name.clone(),
+                old_status: TaskStatus::Paused,
+                new_status: TaskStatus::Idle,
+                timestamp: Utc::now(),
+            });
+
+            self.publish_event(SchedulerEvent::TaskResumed {
+                task_id: self.id.clone(),
+                task_name: self.name.clone(),
+                timestamp: Utc::now(),
+            });
+
             Ok(())
         } else {
             Err(CronlineError::TaskExecutionError(format!(
