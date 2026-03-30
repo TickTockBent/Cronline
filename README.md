@@ -73,6 +73,7 @@ use std::time::Duration;
 #[tokio::main]
 async fn main() {
     // Create a scheduler with custom configuration
+    // - continue_on_error: if false, the scheduler stops when any task fails
     let scheduler = Scheduler::with_config(SchedulerConfig {
         check_interval: Duration::from_millis(100),
         continue_on_error: true,
@@ -139,6 +140,11 @@ let critical_backups = scheduler.tasks_with_all_tags(&["backup", "critical"]).aw
 
 ### Event Bus
 
+Subscribe to scheduler and task lifecycle events. All 13 event types are published:
+
+**Scheduler events:** `SchedulerStarted`, `SchedulerStopped`
+**Task events:** `TaskAdded`, `TaskRemoved`, `TaskStarting`, `TaskCompleted`, `TaskFailed`, `TaskTimedOut`, `TaskTimeoutWarning`, `TaskCancelled`, `TaskStatusChanged`, `TaskPaused`, `TaskResumed`
+
 ```rust
 // Subscribe to scheduler events
 let mut events = scheduler.event_bus().subscribe();
@@ -152,8 +158,14 @@ tokio::spawn(async move {
             SchedulerEvent::TaskCompleted { task_name, duration_ms, .. } => {
                 println!("Task completed: {} ({}ms)", task_name, duration_ms);
             }
-            SchedulerEvent::TaskTimeoutWarning { task_name, .. } => {
-                println!("Task approaching timeout: {}", task_name);
+            SchedulerEvent::TaskFailed { task_name, error, retry_count, .. } => {
+                println!("Task failed: {} (error: {}, retries: {})", task_name, error, retry_count);
+            }
+            SchedulerEvent::TaskTimedOut { task_name, timeout_duration_ms, .. } => {
+                println!("Task timed out: {} (after {}ms)", task_name, timeout_duration_ms);
+            }
+            SchedulerEvent::TaskTimeoutWarning { task_name, percent_complete, .. } => {
+                println!("Task approaching timeout: {} ({}%)", task_name, percent_complete);
             }
             _ => {}
         }
@@ -243,14 +255,16 @@ cargo run --example web_integration_axum
 cargo run --example monitoring_alerting
 ```
 
-## Recent Enhancements (v0.1.1)
+## Recent Enhancements (v0.2.x)
 
 - ✅ Interval-based scheduling with `Task::with_interval(Duration)`
 - ✅ Task tags/labels for grouping and filtering
 - ✅ Graceful task cancellation
 - ✅ Task timeout warnings at 80% of timeout
-- ✅ Scheduler event bus for task/scheduler events
+- ✅ Event bus with all 13 task/scheduler lifecycle events published
 - ✅ Auto-generated meaningful names from cron expressions
+- ✅ `continue_on_error = false` stops the scheduler on task failure
+- ✅ Error types powered by `thiserror` derive macros
 
 ## Future Enhancements
 

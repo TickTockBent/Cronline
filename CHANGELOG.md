@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- All 9 task lifecycle events are now published via the event bus (#23)
+  - `TaskStarting`, `TaskCompleted`, `TaskFailed` — from `Task::execute()`
+  - `TaskTimedOut`, `TaskTimeoutWarning` — from `Task::execute_once()`
+  - `TaskCancelled` — on task cancellation
+  - `TaskPaused`, `TaskResumed` — from `Task::pause()` / `Task::resume()`
+  - `TaskStatusChanged` — at every status transition
+  - Tasks receive the scheduler's `EventBus` automatically when added
+
+### Fixed
+- `SchedulerConfig::continue_on_error = false` now actually stops the scheduler when a task fails (#24)
+  - Previously this only logged an error but had no effect
+
+### Changed
+- Refactored `CronlineError` to use `thiserror` derive macros instead of hand-written impls (#25)
+- Removed unused `_event_bus` parameter from internal scheduler methods
+
 ## [0.2.2] - 2026-03-27
 
 ### Fixed
@@ -13,8 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Recurring tasks reset to `Idle` after execution so the scheduler picks them up again
 
 ### Changed
-- Bumped MSRV from 1.75.0 to 1.85.0 (required by `getrandom` 0.4.2 using edition 2024) (#17)
-- Added `rust-version = "1.85.0"` to Cargo.toml
+- Bumped MSRV from 1.75.0 to 1.87.0 (required by `cron` 0.16.0 and `wit-bindgen-rust` 0.51.0) (#17, #18)
+- Added `rust-version = "1.87.0"` to Cargo.toml
 
 ## [0.2.1] - 2025-11-03
 
@@ -88,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added multi-version testing (stable, beta, nightly)
 - Integrated code coverage reporting with Codecov
 - Added security auditing with cargo-audit and cargo-deny
-- Added MSRV (Minimum Supported Rust Version) checks (currently Rust 1.85.0)
+- Added MSRV (Minimum Supported Rust Version) checks (currently Rust 1.87.0)
 - Implemented fail-fast strategy with quick checks
 - Modern caching with `Swatinem/rust-cache@v2`
 - Weekly scheduled security scans
