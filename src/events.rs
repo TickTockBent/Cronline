@@ -297,4 +297,10 @@ mod tests {
         let event_bus = EventBus::with_capacity(100);
         assert_eq!(event_bus.subscriber_count(), 0);
     }
+
+    #[test]
+    fn test_event_bus_default() {
+        let event_bus = EventBus::default();
+        assert_eq!(event_bus.subscriber_count(), 0);
+    }
 }

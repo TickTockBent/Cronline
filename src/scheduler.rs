@@ -925,6 +925,78 @@ mod tests {
         assert_eq!(scheduler.config.continue_on_error, config.continue_on_error);
     }
 
+    #[test]
+    fn test_scheduler_default() {
+        let scheduler = Scheduler::default();
+        assert_eq!(scheduler.config.check_interval, Duration::from_millis(500));
+    }
+
+    #[tokio::test]
+    async fn test_event_bus_access() {
+        let scheduler = Scheduler::new();
+        let _receiver = scheduler.event_bus().subscribe();
+        assert_eq!(scheduler.event_bus().subscriber_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_tasks_with_tag() {
+        let scheduler = Scheduler::new();
+
+        let task1 = Task::new(|| async { Ok(()) })
+            .with_tag("backup")
+            .with_tag("critical");
+        let task2 = Task::new(|| async { Ok(()) })
+            .with_tag("monitoring");
+        let task3 = Task::new(|| async { Ok(()) })
+            .with_tag("backup");
+
+        scheduler.add("* * * * *", task1).await.unwrap();
+        scheduler.add("* * * * *", task2).await.unwrap();
+        scheduler.add("* * * * *", task3).await.unwrap();
+
+        let backup_tasks = scheduler.tasks_with_tag("backup").await;
+        assert_eq!(backup_tasks.len(), 2);
+
+        let monitoring_tasks = scheduler.tasks_with_tag("monitoring").await;
+        assert_eq!(monitoring_tasks.len(), 1);
+
+        let empty = scheduler.tasks_with_tag("nonexistent").await;
+        assert_eq!(empty.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_tasks_with_any_tag() {
+        let scheduler = Scheduler::new();
+
+        let task1 = Task::new(|| async { Ok(()) }).with_tag("backup");
+        let task2 = Task::new(|| async { Ok(()) }).with_tag("monitoring");
+        let task3 = Task::new(|| async { Ok(()) }).with_tag("cleanup");
+
+        scheduler.add("* * * * *", task1).await.unwrap();
+        scheduler.add("* * * * *", task2).await.unwrap();
+        scheduler.add("* * * * *", task3).await.unwrap();
+
+        let tasks = scheduler.tasks_with_any_tag(&["backup", "monitoring"]).await;
+        assert_eq!(tasks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_tasks_with_all_tags() {
+        let scheduler = Scheduler::new();
+
+        let task1 = Task::new(|| async { Ok(()) })
+            .with_tag("backup")
+            .with_tag("critical");
+        let task2 = Task::new(|| async { Ok(()) })
+            .with_tag("backup");
+
+        scheduler.add("* * * * *", task1).await.unwrap();
+        scheduler.add("* * * * *", task2).await.unwrap();
+
+        let tasks = scheduler.tasks_with_all_tags(&["backup", "critical"]).await;
+        assert_eq!(tasks.len(), 1);
+    }
+
     #[tokio::test]
     #[allow(deprecated)]
     async fn test_update_next_executions() {
