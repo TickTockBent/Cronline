@@ -44,7 +44,7 @@ This document describes the GitHub Actions workflows configured for the Cronline
 - Runs `cargo-deny` to check advisories
 
 #### MSRV Check
-- Verifies compatibility with Rust 1.85.0 (minimum supported version)
+- Verifies compatibility with Rust 1.87.0 (minimum supported version)
 
 #### Documentation
 - Builds documentation with warnings as errors
@@ -154,7 +154,7 @@ For the `main` branch:
 Examples are automatically discovered - no workflow changes needed.
 
 ### When Updating MSRV
-Update the Rust version in the MSRV check job (currently 1.85.0).
+Update the Rust version in the MSRV check job (currently 1.87.0).
 
 ### When Adding New Features
 Add appropriate feature flags to test commands if needed.

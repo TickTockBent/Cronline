@@ -34,7 +34,7 @@ A clear and concise description of what actually happened.
 ## Environment
 
 - Cronline version: [e.g., 0.2.2]
-- Rust version: [e.g., 1.85.0]
+- Rust version: [e.g., 1.87.0]
 - OS: [e.g., Ubuntu 22.04, macOS 14, Windows 11]
 - Tokio version: [if relevant]
 

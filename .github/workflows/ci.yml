@@ -190,10 +190,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.87
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.87.0"
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
